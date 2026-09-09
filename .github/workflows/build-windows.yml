@@ -1,0 +1,86 @@
+name: Build and publish Windows installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, e.g. 1.0.0"
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Set release version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            "RELEASE_VERSION=${{ inputs.version }}" | Out-File -FilePath $env:GITHUB_ENV -Append
+          } else {
+            "RELEASE_VERSION=${{ github.ref_name }}" | ForEach-Object { $_ -replace '^v','' } | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
+      - name: Publish self-contained Windows x64 EXE
+        run: >
+          dotnet publish WordToPDF/WordToPDF.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:Version=${{ env.RELEASE_VERSION }}
+          -o publish
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+
+      - name: Build Windows Setup.exe
+        shell: pwsh
+        run: |
+          $env:RELEASE_VERSION = "${{ env.RELEASE_VERSION }}"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DRELEASE_VERSION=$env:RELEASE_VERSION" `
+            "setup.iss"
+
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = "installer\WordToPDF-Setup-v${{ env.RELEASE_VERSION }}.exe"
+          if (!(Test-Path $installer)) {
+            throw "Installer was not created: $installer"
+          }
+          Write-Host "Created: $installer"
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v${{ env.RELEASE_VERSION }}"
+          if ("${{ github.event_name }}" -eq "push") {
+            $tag = "${{ github.ref_name }}"
+          }
+
+          gh release create $tag `
+            "installer\WordToPDF-Setup-v${{ env.RELEASE_VERSION }}.exe#WordToPDF Setup.exe" `
+            --title "Word to PDF v${{ env.RELEASE_VERSION }}" `
+            --generate-notes `
+            --target "${{ github.sha }}"
