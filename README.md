@@ -1,0 +1,1 @@
+Helps non-technician people easily convert MS Word file to PDF with minimal looks and great functionality. It helps to directly select file, Covert it, and just Copy it to paste into another Application
